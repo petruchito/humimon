@@ -40,9 +40,45 @@ BEGIN_MESSAGE_MAP(ChumimonDlg, CDialogEx)
 	ON_WM_TIMER()
 END_MESSAGE_MAP()
 
+float TemperatureRead()
+{
+	unsigned char scratch, temphigh, templow = 0;
+	
+	if (!onewire_resetPulse(lw)) return -404;
+	onewire_writeByte(lw, 0xCC); // skip rom
+	onewire_writeByte(lw, 0x44); // convert T command
+	delay(750); // wait for conversion
 
+	if (!onewire_resetPulse(lw)) return -404;
+	onewire_writeByte(lw, 0xCC); // skip rom
+	onewire_writeByte(lw, 0xBE); // read scratchpad
 
+	for (int i = 0; i<9; i++) //read 9 bytes from SCRATCHPAD
+	{
+		scratch = onewire_readByte(lw);
 
+		switch (i) 
+		{
+		case 0:
+			templow = scratch;
+		case 1:
+			temphigh = scratch;
+		}
+	}
+	
+	float temperature = ((temphigh & 0x07) << 4);
+	
+	if (temphigh & (0x01 << 11))
+		temperature = -temperature;
+	
+	for (int i = 0; i < 8; i++)
+	{
+		if(templow & (1 << i))
+			temperature += powf(2,(i - 4));	
+	}	
+	
+	return temperature;
+}
 
  void ChumimonDlg::OnTimer(UINT uTime)
 {
@@ -58,11 +94,12 @@ END_MESSAGE_MAP()
 	else 
 	{
 		val = dht_read(lw, DHT22);
+		float temperature = TemperatureRead();
 				
 		if (!val.error && !littleWire_error())
 		{
 			TCHAR buffer[255];
-			_stprintf_s(buffer, L"humidity: %f, temp %f\n", (float)val.humid / 10.0, (float)val.temp / 10.0);
+			_stprintf_s(buffer, L"humidity: %f, temp %f\n sensor: %f", (float)val.humid / 10.0, (float)val.temp / 10.0, temperature);
 			SetDlgItemText(IDC_STATIC, buffer);
 		}
 		else 

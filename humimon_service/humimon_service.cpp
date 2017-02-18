@@ -1,238 +1,224 @@
-// humimon_service.cpp : Defines the entry point for the console application.
-//
+/****************************** Module Header ******************************\
+* Module Name:  SampleService.cpp
+* Project:      CppWindowsService
+* Copyright (c) Microsoft Corporation.
+*
+* Provides a sample service class that derives from the service base class -
+* CServiceBase. The sample service logs the service start and stop
+* information to the Application event log, and shows how to run the main
+* function of the service in a thread pool worker thread.
+*
+* This source is subject to the Microsoft Public License.
+* See http://www.microsoft.com/en-us/openness/resources/licenses.aspx#MPL.
+* All other rights reserved.
+*
+* THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND,
+* EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED
+* WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR PURPOSE.
+\***************************************************************************/
 
-
-#include <Windows.h>
-#include <tchar.h>
+#pragma region Includes
+#include "humimon_service.h"
+#include "ThreadPool.h"
 #include "littleWire.h"
 #include "littleWire_util.h"
+#pragma endregion
 
-unsigned char version;
-dht_reading val;
-littleWire *lw = NULL;
-
-SERVICE_STATUS        g_ServiceStatus = { 0 };
-SERVICE_STATUS_HANDLE g_StatusHandle = NULL;
-HANDLE                g_ServiceStopEvent = INVALID_HANDLE_VALUE;
-
-VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv);
-VOID WINAPI ServiceCtrlHandler(DWORD);
-DWORD WINAPI ServiceWorkerThread(LPVOID lpParam);
-
-#define SERVICE_NAME  _T("Humimon Service")
-
-int _tmain(int argc, TCHAR *argv[])
+CHumimonService::CHumimonService(PWSTR pszServiceName,
+	BOOL fCanStop,
+	BOOL fCanShutdown,
+	BOOL fCanPauseContinue)
+	: CServiceBase(pszServiceName, fCanStop, fCanShutdown, fCanPauseContinue)
 {
-	OutputDebugString(_T("My Sample Service: Main: Entry"));
+	m_fStopping = FALSE;
 
-	SERVICE_TABLE_ENTRY ServiceTable[] =
+	// Create a manual-reset event that is not signaled at first to indicate 
+	// the stopped signal of the service.
+	m_hStoppedEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (m_hStoppedEvent == NULL)
 	{
-		{ SERVICE_NAME, (LPSERVICE_MAIN_FUNCTION)ServiceMain },
-		{ NULL, NULL }
-	};
-
-	if (StartServiceCtrlDispatcher(ServiceTable) == FALSE)
-	{
-		OutputDebugString(_T("My Sample Service: Main: StartServiceCtrlDispatcher returned error"));
-		return GetLastError();
+		throw GetLastError();
 	}
-
-	OutputDebugString(_T("My Sample Service: Main: Exit"));
-	return 0;
 }
 
 
-VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv)
+CHumimonService::~CHumimonService(void)
 {
-	DWORD Status = E_FAIL;
-
-	OutputDebugString(_T("My Sample Service: ServiceMain: Entry"));
-
-	g_StatusHandle = RegisterServiceCtrlHandler(SERVICE_NAME, ServiceCtrlHandler);
-
-	if (g_StatusHandle == NULL)
+	if (m_hStoppedEvent)
 	{
-		OutputDebugString(_T("My Sample Service: ServiceMain: RegisterServiceCtrlHandler returned error"));
-		goto EXIT;
+		CloseHandle(m_hStoppedEvent);
+		m_hStoppedEvent = NULL;
 	}
-
-	// Tell the service controller we are starting
-	ZeroMemory(&g_ServiceStatus, sizeof(g_ServiceStatus));
-	g_ServiceStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-	g_ServiceStatus.dwControlsAccepted = 0;
-	g_ServiceStatus.dwCurrentState = SERVICE_START_PENDING;
-	g_ServiceStatus.dwWin32ExitCode = 0;
-	g_ServiceStatus.dwServiceSpecificExitCode = 0;
-	g_ServiceStatus.dwCheckPoint = 0;
-
-	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
-	{
-		OutputDebugString(_T("My Sample Service: ServiceMain: SetServiceStatus returned error"));
-	}
-
-	/*
-	* Perform tasks neccesary to start the service here
-	*/
-	OutputDebugString(_T("My Sample Service: ServiceMain: Performing Service Start Operations"));
-
-	// Create stop event to wait on later.
-	g_ServiceStopEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-	if (g_ServiceStopEvent == NULL)
-	{
-		OutputDebugString(_T("My Sample Service: ServiceMain: CreateEvent(g_ServiceStopEvent) returned error"));
-
-		g_ServiceStatus.dwControlsAccepted = 0;
-		g_ServiceStatus.dwCurrentState = SERVICE_STOPPED;
-		g_ServiceStatus.dwWin32ExitCode = GetLastError();
-		g_ServiceStatus.dwCheckPoint = 1;
-
-		if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
-		{
-			OutputDebugString(_T("My Sample Service: ServiceMain: SetServiceStatus returned error"));
-		}
-		goto EXIT;
-	}
-
-	// Tell the service controller we are started
-	g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_STOP;
-	g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
-	g_ServiceStatus.dwWin32ExitCode = 0;
-	g_ServiceStatus.dwCheckPoint = 0;
-
-	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
-	{
-		OutputDebugString(_T("My Sample Service: ServiceMain: SetServiceStatus returned error"));
-	}
-
-	// Start the thread that will perform the main task of the service
-	HANDLE hThread = CreateThread(NULL, 0, ServiceWorkerThread, NULL, 0, NULL);
-
-	OutputDebugString(_T("My Sample Service: ServiceMain: Waiting for Worker Thread to complete"));
-
-	// Wait until our worker thread exits effectively signaling that the service needs to stop
-	WaitForSingleObject(hThread, INFINITE);
-
-	OutputDebugString(_T("My Sample Service: ServiceMain: Worker Thread Stop Event signaled"));
-
-
-	/*
-	* Perform any cleanup tasks
-	*/
-	OutputDebugString(_T("My Sample Service: ServiceMain: Performing Cleanup Operations"));
-
-	CloseHandle(g_ServiceStopEvent);
-
-	g_ServiceStatus.dwControlsAccepted = 0;
-	g_ServiceStatus.dwCurrentState = SERVICE_STOPPED;
-	g_ServiceStatus.dwWin32ExitCode = 0;
-	g_ServiceStatus.dwCheckPoint = 3;
-
-	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
-	{
-		OutputDebugString(_T("My Sample Service: ServiceMain: SetServiceStatus returned error"));
-	}
-
-EXIT:
-	OutputDebugString(_T("My Sample Service: ServiceMain: Exit"));
-
-	return;
 }
 
 
-VOID WINAPI ServiceCtrlHandler(DWORD CtrlCode)
+//
+//   FUNCTION: CHumimonService::OnStart(DWORD, LPWSTR *)
+//
+//   PURPOSE: The function is executed when a Start command is sent to the 
+//   service by the SCM or when the operating system starts (for a service 
+//   that starts automatically). It specifies actions to take when the 
+//   service starts. In this code sample, OnStart logs a service-start 
+//   message to the Application log, and queues the main service function for 
+//   execution in a thread pool worker thread.
+//
+//   PARAMETERS:
+//   * dwArgc   - number of command line arguments
+//   * lpszArgv - array of command line arguments
+//
+//   NOTE: A service application is designed to be long running. Therefore, 
+//   it usually polls or monitors something in the system. The monitoring is 
+//   set up in the OnStart method. However, OnStart does not actually do the 
+//   monitoring. The OnStart method must return to the operating system after 
+//   the service's operation has begun. It must not loop forever or block. To 
+//   set up a simple monitoring mechanism, one general solution is to create 
+//   a timer in OnStart. The timer would then raise events in your code 
+//   periodically, at which time your service could do its monitoring. The 
+//   other solution is to spawn a new thread to perform the main service 
+//   functions, which is demonstrated in this code sample.
+//
+void CHumimonService::OnStart(DWORD dwArgc, LPWSTR *lpszArgv)
 {
-	OutputDebugString(_T("My Sample Service: ServiceCtrlHandler: Entry"));
+	// Log a service start message to the Application log.
+	WriteEventLogEntry(L"Humimon service in OnStart",
+		EVENTLOG_INFORMATION_TYPE);
 
-	switch (CtrlCode)
-	{
-	case SERVICE_CONTROL_STOP:
-
-		OutputDebugString(_T("My Sample Service: ServiceCtrlHandler: SERVICE_CONTROL_STOP Request"));
-
-		if (g_ServiceStatus.dwCurrentState != SERVICE_RUNNING)
-			break;
-
-		/*
-		* Perform tasks neccesary to stop the service here
-		*/
-
-		g_ServiceStatus.dwControlsAccepted = 0;
-		g_ServiceStatus.dwCurrentState = SERVICE_STOP_PENDING;
-		g_ServiceStatus.dwWin32ExitCode = 0;
-		g_ServiceStatus.dwCheckPoint = 4;
-
-		if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
-		{
-			OutputDebugString(_T("My Sample Service: ServiceCtrlHandler: SetServiceStatus returned error"));
-		}
-
-		// This will signal the worker thread to start shutting down
-		SetEvent(g_ServiceStopEvent);
-
-		break;
-
-	default:
-		break;
-	}
-
-	OutputDebugString(_T("My Sample Service: ServiceCtrlHandler: Exit"));
+	// Queue the main service function for execution in a worker thread.
+	CThreadPool::QueueUserWorkItem(&CHumimonService::ServiceWorkerThread, this);
 }
 
-
-DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
+//
+//   FUNCTION: CHumimonService::ServiceWorkerThread(void)
+//
+//   PURPOSE: The method performs the main function of the service. It runs 
+//   on a thread pool worker thread.
+//
+void CHumimonService::ServiceWorkerThread(void)
 {
-	OutputDebugString(_T("My Sample Service: ServiceWorkerThread: Entry"));
-
-	//  Periodically check if the service has been requested to stop
-	while (WaitForSingleObject(g_ServiceStopEvent, 0) != WAIT_OBJECT_0)
+	LPWSTR ErrorText = new wchar_t[100];
+	LPWSTR LogText = new wchar_t[100];
+	littleWire *lw = NULL;
+	HANDLE hTimer = NULL;
+	LARGE_INTEGER liDueTime;
+	liDueTime.QuadPart = -100000000LL; //10 sec
+	hTimer = CreateWaitableTimer(NULL, TRUE, NULL);
+	if (NULL == hTimer)
 	{
-		/*
-		* Perform main service function here
-		*/
-
-		//  Simulate some work by sleeping
-		Sleep(3000);
+		
+		swprintf_s(ErrorText, 100, L"CreateWaitableTimer failed %d", GetLastError());
+		WriteEventLogEntry(ErrorText, EVENTLOG_ERROR_TYPE);
 	}
-
-	OutputDebugString(_T("My Sample Service: ServiceWorkerThread: Exit"));
-
-	return ERROR_SUCCESS;
-}
-/*
-int main()
-{
-		 if (lw == NULL)
-	 {
-		 lw = littleWire_connect();
-	 }
-
-	if (lw == NULL) 
-	{
-		//SetDlgItemText(IDC_STATIC, L"Little Wire could not be found!\n");
-		printf("Little Wire could not be found!\n");
-	}
-	else 
-	{
-		val = dht_read(lw, DHT22);
-				
-		if (!val.error && !littleWire_error())
+		
+	while (!m_fStopping)
+	{			
+		if (!SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, 0))
 		{
-			TCHAR buffer[255];
-			//_stprintf_s(buffer, L"humidity: %f, temp %f\n", (float)val.humid / 10.0, (float)val.temp / 10.0);
-			//SetDlgItemText(IDC_STATIC, buffer);
-			printf("humidity: %f, temp %f\n", (float)val.humid / 10.0, (float)val.temp / 10.0);
-		}
-		else 
-		{
-			//SetDlgItemText(IDC_STATIC, L"Error Reading sensor!");
-			//SetDlgItemText(IDC_STATIC, CA2W(littleWire_errorName()));
-			printf(littleWire_errorName());
 			
-			lw = NULL;
+			swprintf_s(ErrorText, 100, L"SetWaitable timer failed %d", GetLastError());
+			WriteEventLogEntry(ErrorText, EVENTLOG_ERROR_TYPE);
+		}
+
+		if (WaitForSingleObject(hTimer, INFINITE) != WAIT_OBJECT_0) 
+		{
+			
+			swprintf_s(ErrorText, 100,L"WaitForSingleObject failed %d", GetLastError());
+			WriteEventLogEntry(ErrorText, EVENTLOG_ERROR_TYPE);
+		}			
+		else
+		{
+			WriteEventLogEntry(L"Timer tick", EVENTLOG_INFORMATION_TYPE);
+			if (lw == NULL)
+				lw = littleWire_connect();
+			
+			if (lw)
+			{
+				dht_reading val = dht_read(lw, DHT22);
+				float temperature = TemperatureRead(lw);
+
+				if ((!val.error || temperature != -404) && !littleWire_error())
+				{					
+					swprintf_s(LogText, 100, L"humidity: %f, temp %f, sensor: %f", (float)val.humid / 10.0, (float)val.temp / 10.0, temperature);
+					WriteEventLogEntry(LogText, EVENTLOG_INFORMATION_TYPE);
+				}
+				else
+				{
+					//SetDlgItemText(IDC_STATIC, L"Error Reading sensor!");
+					//SetDlgItemText(IDC_STATIC, CA2W(littleWire_errorName()));
+
+					lw = NULL;
+				}
+			}
+			
+		}	
+		
+	}
+
+	SetEvent(m_hStoppedEvent);
+}
+
+float CHumimonService::TemperatureRead(littleWire* lw)
+{
+	unsigned char scratch, temphigh, templow = 0;
+
+	if (!onewire_resetPulse(lw)) return -404;
+	onewire_writeByte(lw, 0xCC); // skip rom
+	onewire_writeByte(lw, 0x44); // convert T command
+	::Sleep(750); // wait for conversion
+
+	if (!onewire_resetPulse(lw)) return -404;
+	onewire_writeByte(lw, 0xCC); // skip rom
+	onewire_writeByte(lw, 0xBE); // read scratchpad
+
+	for (int i = 0; i<9; i++) //read 9 bytes from SCRATCHPAD
+	{
+		scratch = onewire_readByte(lw);
+
+		switch (i)
+		{
+		case 0:
+			templow = scratch;
+		case 1:
+			temphigh = scratch;
 		}
 	}
 
-    return 0;
-}
-*/
+	float temperature = ((temphigh & 0x07) << 4);
 
+	if (temphigh & (0x01 << 11))
+		temperature = -temperature;
+
+	for (int i = 0; i < 8; i++)
+	{
+		if (templow & (1 << i))
+			temperature += powf(2, (i - 4));
+	}
+
+	return temperature;
+}
+
+//
+//   FUNCTION: CHumimonService::OnStop(void)
+//
+//   PURPOSE: The function is executed when a Stop command is sent to the 
+//   service by SCM. It specifies actions to take when a service stops 
+//   running. In this code sample, OnStop logs a service-stop message to the 
+//   Application log, and waits for the finish of the main service function.
+//
+//   COMMENTS:
+//   Be sure to periodically call ReportServiceStatus() with 
+//   SERVICE_STOP_PENDING if the procedure is going to take long time. 
+//
+void CHumimonService::OnStop()
+{
+	// Log a service stop message to the Application log.
+	WriteEventLogEntry(L"Humimon service in OnStop",
+		EVENTLOG_INFORMATION_TYPE);
+
+	// Indicate that the service is stopping and wait for the finish of the 
+	// main service function (ServiceWorkerThread).
+	m_fStopping = TRUE;
+	if (WaitForSingleObject(m_hStoppedEvent, INFINITE) != WAIT_OBJECT_0)
+	{
+		throw GetLastError();
+	}
+}
