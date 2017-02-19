@@ -22,6 +22,7 @@
 #include "ThreadPool.h"
 #include "littleWire.h"
 #include "littleWire_util.h"
+#include "curl/curl.h"
 #pragma endregion
 
 CHumimonService::CHumimonService(PWSTR pszServiceName,
@@ -95,6 +96,8 @@ void CHumimonService::OnStart(DWORD dwArgc, LPWSTR *lpszArgv)
 //
 void CHumimonService::ServiceWorkerThread(void)
 {
+	CURL *curl;
+	CURLcode res;	
 	LPWSTR ErrorText = new wchar_t[100];
 	LPWSTR LogText = new wchar_t[100];
 	littleWire *lw = NULL;
@@ -136,8 +139,18 @@ void CHumimonService::ServiceWorkerThread(void)
 				float temperature = TemperatureRead(lw);
 
 				if ((!val.error || temperature != -404) && !littleWire_error())
-				{					
-					swprintf_s(LogText, 100, L"humidity: %f, temp %f, sensor: %f", (float)val.humid / 10.0, (float)val.temp / 10.0, temperature);
+				{
+
+					curl = curl_easy_init();
+
+					if (curl)
+					{
+						curl_easy_setopt(curl, CURLOPT_URL, "http://google.com");
+						res = curl_easy_perform(curl);
+						curl_easy_cleanup(curl);						
+					}
+					
+					swprintf_s(LogText, 100, L"humidity: %f, temp %f, sensor: %f, res: %d", (float)val.humid / 10.0, (float)val.temp / 10.0, temperature, res);
 					WriteEventLogEntry(LogText, EVENTLOG_INFORMATION_TYPE);
 				}
 				else
