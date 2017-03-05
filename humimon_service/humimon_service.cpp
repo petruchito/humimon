@@ -23,6 +23,7 @@
 #include "littleWire.h"
 #include "littleWire_util.h"
 #include "curl/curl.h"
+#include <chrono>
 #pragma endregion
 
 CHumimonService::CHumimonService(PWSTR pszServiceName,
@@ -103,7 +104,7 @@ void CHumimonService::ServiceWorkerThread(void)
 	littleWire *lw = NULL;
 	HANDLE hTimer = NULL;
 	LARGE_INTEGER liDueTime;
-	liDueTime.QuadPart = -100000000LL; //10 sec
+	liDueTime.QuadPart = -100000000LL; //10 sec in 0.1us intervals
 	hTimer = CreateWaitableTimer(NULL, TRUE, NULL);
 	if (NULL == hTimer)
 	{
@@ -145,16 +146,30 @@ void CHumimonService::ServiceWorkerThread(void)
 
 					if (curl)
 					{
-						curl_easy_setopt(curl, CURLOPT_URL, "http://google.com");
+						char URLString[255] = {0};
+						//TODO add a registry value for URL format string
+						sprintf_s(URLString, 255, "http://192.168.33.10:4567/submit?st=%.4f&t=%.1f&h=%.1f&ts=%llu",
+							temperature,
+							(float)val.temp / 10,
+							(float)val.humid / 10,
+							std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+
+						curl_easy_setopt(curl, CURLOPT_URL, URLString);
 						res = curl_easy_perform(curl);
+						if (res)
+						{
+							swprintf_s(LogText, 100, L"Curl result: %d", res);
+							WriteEventLogEntry(LogText, EVENTLOG_ERROR_TYPE);
+						}
+						
 						curl_easy_cleanup(curl);						
 					}
 					
-					swprintf_s(LogText, 100, L"humidity: %f, temp %f, sensor: %f, res: %d", (float)val.humid / 10.0, (float)val.temp / 10.0, temperature, res);
-					WriteEventLogEntry(LogText, EVENTLOG_INFORMATION_TYPE);
-				}
+					}
 				else
 				{
+					//TODO Add error handling
+
 					//SetDlgItemText(IDC_STATIC, L"Error Reading sensor!");
 					//SetDlgItemText(IDC_STATIC, CA2W(littleWire_errorName()));
 
