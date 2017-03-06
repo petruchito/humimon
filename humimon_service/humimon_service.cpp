@@ -23,6 +23,7 @@
 #include "littleWire.h"
 #include "littleWire_util.h"
 #include "curl/curl.h"
+#include <tchar.h>
 #include <chrono>
 #pragma endregion
 
@@ -97,56 +98,56 @@ void CHumimonService::OnStart(DWORD dwArgc, LPWSTR *lpszArgv)
 //
 void CHumimonService::ServiceWorkerThread(void)
 {
+	int LastLoggedError = 0;
+
 	CURL *curl;
-	CURLcode res;	
-	LPWSTR ErrorText = new wchar_t[100];
-	LPWSTR LogText = new wchar_t[100];
+	CURLcode res;
+	TCHAR ErrorText[100];
+	TCHAR LogText[100];
 	littleWire *lw = NULL;
 	HANDLE hTimer = NULL;
+
 	LARGE_INTEGER liDueTime;
 	liDueTime.QuadPart = -100000000LL; //10 sec in 0.1us intervals
 	hTimer = CreateWaitableTimer(NULL, TRUE, NULL);
+	
 	if (NULL == hTimer)
 	{
-		
-		swprintf_s(ErrorText, 100, L"CreateWaitableTimer failed %d", GetLastError());
+
+		_stprintf_s(ErrorText, 100, _T("CreateWaitableTimer failed %d"), GetLastError());
 		WriteEventLogEntry(ErrorText, EVENTLOG_ERROR_TYPE);
 	}
-		
+
 	while (!m_fStopping)
-	{			
+	{
 		if (!SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, 0))
 		{
-			
-			swprintf_s(ErrorText, 100, L"SetWaitable timer failed %d", GetLastError());
+			_stprintf_s(ErrorText, 100, _T("SetWaitable timer failed %d"), GetLastError());
 			WriteEventLogEntry(ErrorText, EVENTLOG_ERROR_TYPE);
 		}
 
-		if (WaitForSingleObject(hTimer, INFINITE) != WAIT_OBJECT_0) 
+		if (WaitForSingleObject(hTimer, INFINITE) != WAIT_OBJECT_0)
 		{
-			
-			swprintf_s(ErrorText, 100,L"WaitForSingleObject failed %d", GetLastError());
+
+			_stprintf_s(ErrorText, 100, _T("WaitForSingleObject failed %d"), GetLastError());
 			WriteEventLogEntry(ErrorText, EVENTLOG_ERROR_TYPE);
-		}			
+		}
 		else
 		{
-			WriteEventLogEntry(L"Timer tick", EVENTLOG_INFORMATION_TYPE);
-			if (lw == NULL)
-				lw = littleWire_connect();
-			
+			//WriteEventLogEntry(L"Timer tick", EVENTLOG_INFORMATION_TYPE);
+			if (lw == NULL) lw = littleWire_connect();
 			if (lw)
 			{
+				LastLoggedError = 0;
 				dht_reading val = dht_read(lw, DHT22);
 				float temperature = TemperatureRead(lw);
 
 				if ((!val.error || temperature != -404) && !littleWire_error())
 				{
-
 					curl = curl_easy_init();
-
 					if (curl)
 					{
-						char URLString[255] = {0};
+						char URLString[255] = { 0 };
 						//TODO add a registry value for URL format string
 						sprintf_s(URLString, 255, "http://192.168.33.10:4567/submit?st=%.4f&t=%.1f&h=%.1f&ts=%llu",
 							temperature,
@@ -158,30 +159,74 @@ void CHumimonService::ServiceWorkerThread(void)
 						res = curl_easy_perform(curl);
 						if (res)
 						{
-							swprintf_s(LogText, 100, L"Curl result: %d", res);
+							_stprintf_s(LogText, 100, _T("Curl result: %d"), res);
 							WriteEventLogEntry(LogText, EVENTLOG_ERROR_TYPE);
 						}
-						
-						curl_easy_cleanup(curl);						
+
+						curl_easy_cleanup(curl);
 					}
-					
-					}
+				}
 				else
 				{
-					//TODO Add error handling
+					TCHAR* Errors[3];
 
-					//SetDlgItemText(IDC_STATIC, L"Error Reading sensor!");
-					//SetDlgItemText(IDC_STATIC, CA2W(littleWire_errorName()));
-
-					lw = NULL;
+					if (temperature == -404) Errors[0] = _T("Error reading DS18B20");
+					switch (val.error)
+					{
+					case 0:
+						break;
+					case 128:
+						Errors[1] = _T("DHT timeout error");
+						break;
+					case 255:
+						Errors[2] = _T("DHT checksum error");
+						break;
+					}
+					for (char i = 0; i < 3; i++)
+					{
+						WriteEventLogEntry(Errors[i], EVENTLOG_ERROR_TYPE);
+					}
+					if (littleWire_error) {
+						LogLittleWireError();
+						lw = NULL;
+					}
+					//LastLoggedError = error;
+					
+				}
+			} //if (lw)
+			else
+			{
+				int error = littleWire_error();
+				if (error != LastLoggedError)
+				{
+					LogLittleWireError();
+					LastLoggedError = error;
 				}
 			}
-			
-		}	
-		
-	}
 
-	SetEvent(m_hStoppedEvent);
+		}
+
+		SetEvent(m_hStoppedEvent);
+	}
+}
+
+void CHumimonService::LogLittleWireError(void)
+{
+	char* lwErrorNameA = littleWire_errorName();
+	TCHAR LogText[255];
+#ifdef UNICODE
+	int wchars_num = MultiByteToWideChar(CP_UTF8, 0, lwErrorNameA, -1, NULL, 0);
+	wchar_t* lwErrorName = new wchar_t[wchars_num];
+	MultiByteToWideChar(CP_UTF8, 0, lwErrorNameA, -1, lwErrorName, wchars_num);
+	swprintf_s(LogText, 255, L"Littlewire error: %s", lwErrorName);
+	WriteEventLogEntry(LogText, EVENTLOG_ERROR_TYPE);
+	delete[] lwErrorName;
+#endif // UNICODE
+
+#ifndef UNICODE
+	sprintf_s(LogText, 100, "Littlewire error: %s", lwErrorName);
+#endif // !UNICODE
+
 }
 
 float CHumimonService::TemperatureRead(littleWire* lw)

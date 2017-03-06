@@ -21,7 +21,6 @@
 
 #include "ServiceBase.h"
 #include "littleWire.h"
-#include "littleWire_util.h"
 
 class CHumimonService : public CServiceBase
 {
@@ -45,5 +44,6 @@ private:
     BOOL m_fStopping;
     HANDLE m_hStoppedEvent;
 	float TemperatureRead(littleWire* lw);
+	void LogLittleWireError(void);
 	
 };
