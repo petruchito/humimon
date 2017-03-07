@@ -50,6 +50,7 @@
 // The password to the service account name
 #define SERVICE_PASSWORD         NULL
 
+
 void PrintHelp(void)
 {
 	wprintf(L"Parameters:\n");
@@ -59,6 +60,7 @@ void PrintHelp(void)
 	wprintf(L" -set-interval [seconds] to set the logging interval.\n");
 	wprintf(L" -remove-settings to remove all settings from registry.\n");
 	wprintf(L" -set-serial to set the LittleWire serial number. And select it for connection.\n");
+	wprintf(L" -show-settings to show current service settings\n");
 }
 
 //
@@ -78,6 +80,8 @@ void PrintHelp(void)
 //
 int wmain(int argc, wchar_t *argv[])
 {
+	CServiceSettings Settings;
+
 	if ((argc > 1) && (*argv[1] == L'-'))
 	{
 		for (int i = 1; i < argc; i++)
@@ -103,14 +107,17 @@ int wmain(int argc, wchar_t *argv[])
 				// Uninstall the service when the command is 
 				// "-remove" or "/remove".
 				UninstallService(SERVICE_NAME);
-				if (0 == RemoveSettings()) wprintf(L"Settings removed from registry\n");
+//				if (0 == RemoveSettings()) wprintf(L"Settings removed from registry\n");
 			}
 			else if (_wcsicmp(L"set-url", argv[i] + 1) == 0)
 			{
 				if (_tcslen(argv[i + 1]) > 0 && (*argv[i + 1] != L'-'))
 				{
 					wprintf(L"Setting URL to: %s\n", argv[i + 1]);
-					SetURL(argv[i + 1]);
+
+					//SetURL(argv[i + 1]);
+					wcscpy_s(Settings.URL,500,argv[i + 1]);
+					Settings.save();
 					i++;
 				}
 				else
@@ -124,14 +131,20 @@ int wmain(int argc, wchar_t *argv[])
 				{
 					DWORD Interval = _ttol(argv[i + 1]);
 					wprintf(L"Setting interval to: %d\n", Interval);
-					SetInterval(Interval);
+					Settings.Interval = Interval;
+					Settings.save();
 					i++;
 				}
 			}
 			else if (_wcsicmp(L"remove-settings", argv[i] + 1) == 0)
 			{
-				if (0 == RemoveSettings()) wprintf(L"Settings removed from registry\n");
-
+//				if (0 == RemoveSettings()) wprintf(L"Settings removed from registry\n");
+				Settings.remove();
+				wprintf(L"Settings removed\n");
+			}
+			else if (_wcsicmp(L"show-settings", argv[i] + 1) == 0)
+			{
+				wprintf(L"Interval: %d\nSerial: %d\nUrl: \"%s\"\n", Settings.Interval, Settings.Serial, Settings.URL);
 			}
 			else if (_wcsicmp(L"set-serial", argv[i] + 1) == 0)
 			{
@@ -143,7 +156,7 @@ int wmain(int argc, wchar_t *argv[])
 					wprintf(L"No LittleWire devices found\n");
 					break;
 				case 1:
-					wprintf(L"Found 1 LittleWire device: [ %d ]\n", lwResults[0].serialNumber);
+					wprintf(L"Found LittleWire device: [ %d ]\n", lwResults[0].serialNumber);
 					Selection = 0;
 					break;
 				default:
@@ -186,7 +199,7 @@ int wmain(int argc, wchar_t *argv[])
 				//selected device, now set the serial
 
 				int NewSerialNumber = -1;				
-				wprintf(L"Please enter new serial number for the selected device(100-999):\n");				
+				wprintf(L"Please enter new serial number(100-999):\n");				
 				while (1)
 				{
 					TCHAR Input[100];
@@ -207,22 +220,26 @@ int wmain(int argc, wchar_t *argv[])
 						{
 							wprintf(L"Setting new serial number to %d\n", NewSerialNumber);
 							littleWire* lw = NULL;
-							lw = littlewire_connect_byID(Selection);
-							if (lw != NULL) 
+							if (DeviceCount > 0)
 							{
-								if (lwResults[Selection].serialNumber != NewSerialNumber)
+								lw = littlewire_connect_byID(Selection);
+								if (lw != NULL)
 								{
-									changeSerialNumber(lw, NewSerialNumber);
-									wprintf(L"Changed successfully, please reconnect the device.\n");
+									if (lwResults[Selection].serialNumber != NewSerialNumber)
+									{
+										changeSerialNumber(lw, NewSerialNumber);
+										wprintf(L"Changed successfully, please reconnect the device.\n");
+									}
 								}
-								wprintf(L"Saving selected serial number to registry\n");
-								SetSerialNumber(NewSerialNumber);
-								
-							} 
-							else 
-							{
-								wprintf(L"Error connecting to the device: %s", littleWire_errorName());
+								else
+								{
+									wprintf(L"Error connecting to the device: %s", littleWire_errorName());
+								}
 							}
+							wprintf(L"Saving selected serial number to registry\n");
+							Settings.Serial = NewSerialNumber;
+							Settings.save();
+
 
 							break;
 						}
