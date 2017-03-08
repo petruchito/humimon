@@ -43,7 +43,7 @@ private:
 
     BOOL m_fStopping;
     HANDLE m_hStoppedEvent;
-	float TemperatureRead(littleWire* lw);
+	double TemperatureRead(littleWire* lw);
 	void LogLittleWireError(void);
 	
 };

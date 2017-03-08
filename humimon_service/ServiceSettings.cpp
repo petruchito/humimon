@@ -3,14 +3,13 @@
 #include <windows.h>
 #include "ServiceSettings.h"
 #include <tchar.h>
+#include <sddl.h>
 #pragma endregion
-
-
 
 CServiceSettings::CServiceSettings() 
 {
 	wcscpy_s(URL, 500, DEFAULT_URL);
-	if (ERROR != CreateKey())
+	if (SETTINGS_ERROR != CreateKey())
 	{
 		ReadSettings();
 		CloseKey();
@@ -21,7 +20,7 @@ int CServiceSettings::OpenKey()
 {
 	if (ERROR_SUCCESS == RegOpenKeyEx(HKEY_LOCAL_MACHINE, SubKey, 0, KEY_READ, &HumimonKey))		
 		return 0;
-	return ERROR;
+	return SETTINGS_ERROR;
 }
 
 void CServiceSettings::CloseKey()
@@ -64,42 +63,32 @@ int CServiceSettings::ReadSettings()
 
 int CServiceSettings::CreateKey()
 {
+	SECURITY_ATTRIBUTES sa;
+	sa.bInheritHandle = FALSE;
+	sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+	ConvertStringSecurityDescriptorToSecurityDescriptor(L"D:AI(A; CI; KA;;; LS)"
+		L"(A;ID;KR;;;BU)(A;CIIOID;GR;;;BU)"
+		L"(A;ID;KA;;;BA)(A;CIIOID;GA;;;BA)"
+		L"(A;ID;KA;;;SY)(A;CIIOID;GA;;;SY)", SDDL_REVISION_1, &sa.lpSecurityDescriptor, NULL);
 	if (ERROR_SUCCESS != RegCreateKeyEx(HKEY_LOCAL_MACHINE, 
 										SubKey, 
 										0, NULL, 0, KEY_ALL_ACCESS, 
-										NULL, &HumimonKey, NULL)) return ERROR;	
-	return 0;
+										&sa, &HumimonKey, NULL)) return SETTINGS_ERROR;
+	
+	return SETTINGS_SUCCESS;
 }
 int CServiceSettings::save()
 {
 	CreateKey();
-	if (HumimonKey == NULL) return ERROR;
-	if (ERROR_SUCCESS != RegSetValueEx(HumimonKey, L"Serial", 0, REG_DWORD, (LPBYTE)&Serial, sizeof(DWORD))) return ERROR;
-	if (ERROR_SUCCESS != RegSetValueEx(HumimonKey, L"Interval", 0, REG_DWORD, (LPBYTE)&Interval, sizeof(DWORD))) return ERROR;
-	if (ERROR_SUCCESS != RegSetValueEx(HumimonKey, L"URL", 0, REG_SZ,(LPBYTE)URL, wcslen(URL)*sizeof(wchar_t))) return ERROR;
+	if (HumimonKey == NULL) return SETTINGS_ERROR;
+	if (ERROR_SUCCESS != RegSetValueEx(HumimonKey, L"Serial", 0, REG_DWORD, (LPBYTE)&Serial, sizeof(DWORD))) return SETTINGS_ERROR;
+	if (ERROR_SUCCESS != RegSetValueEx(HumimonKey, L"Interval", 0, REG_DWORD, (LPBYTE)&Interval, sizeof(DWORD))) return SETTINGS_ERROR;
+	if (ERROR_SUCCESS != RegSetValueEx(HumimonKey, L"URL", 0, REG_SZ,(LPBYTE)URL, wcslen(URL)*sizeof(wchar_t))) return SETTINGS_ERROR;
 	CloseKey();
+	return SETTINGS_SUCCESS;
 }
 
 void CServiceSettings::remove()
 {
 	RegDeleteKey(HKEY_LOCAL_MACHINE, SubKey);
-
-}
-
-int CServiceSettings::RegSaveValue(PWSTR name, DWORD dwType, LPBYTE data, DWORD size)
-{
-	HKEY URLKey;
-	TCHAR SubKey[100] = SUBKEY;
-
-	if (ERROR_SUCCESS != RegCreateKeyEx(HKEY_LOCAL_MACHINE, SubKey, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &URLKey, NULL))
-	{
-		wprintf(_T("Error creating key\n"));
-		return -1;
-	}
-	if (ERROR_SUCCESS != RegSetValueEx(URLKey, name, 0, dwType, data, size))
-	{
-		wprintf(_T("Error creating value\n"));
-		return -1;
-	}
-	RegCloseKey(URLKey);
 }

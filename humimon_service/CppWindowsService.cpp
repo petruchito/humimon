@@ -90,8 +90,6 @@ int wmain(int argc, wchar_t *argv[])
 			if (_wcsicmp(L"install", argv[i] + 1) == 0 && install_option_unlocked)
 			{
 				install_option_unlocked = false;
-				// Install the service when the command is 
-				// "-install" or "/install".
 				InstallService(
 					SERVICE_NAME,               // Name of service
 					SERVICE_DISPLAY_NAME,       // Name to display
@@ -103,11 +101,9 @@ int wmain(int argc, wchar_t *argv[])
 			}
 			else if (_wcsicmp(L"remove", argv[i] + 1) == 0 && install_option_unlocked)
 			{
-				install_option_unlocked = false;
-				// Uninstall the service when the command is 
-				// "-remove" or "/remove".
+				install_option_unlocked = false;				
 				UninstallService(SERVICE_NAME);
-//				if (0 == RemoveSettings()) wprintf(L"Settings removed from registry\n");
+				Settings.remove();
 			}
 			else if (_wcsicmp(L"set-url", argv[i] + 1) == 0)
 			{
@@ -138,7 +134,6 @@ int wmain(int argc, wchar_t *argv[])
 			}
 			else if (_wcsicmp(L"remove-settings", argv[i] + 1) == 0)
 			{
-//				if (0 == RemoveSettings()) wprintf(L"Settings removed from registry\n");
 				Settings.remove();
 				wprintf(L"Settings removed\n");
 			}
@@ -233,7 +228,21 @@ int wmain(int argc, wchar_t *argv[])
 								}
 								else
 								{
-									wprintf(L"Error connecting to the device: %s", littleWire_errorName());
+									char* lwErrorNameA = littleWire_errorName();
+									TCHAR LogText[255];
+#ifdef UNICODE
+									int wchars_num = MultiByteToWideChar(CP_UTF8, 0, lwErrorNameA, -1, NULL, 0);
+									wchar_t* lwErrorName = new wchar_t[wchars_num];
+									MultiByteToWideChar(CP_UTF8, 0, lwErrorNameA, -1, lwErrorName, wchars_num);
+									wprintf_s(LogText, 255, L"Littlewire error: %s", lwErrorName);
+									
+									delete[] lwErrorName;
+#endif // UNICODE
+
+#ifndef UNICODE
+									sprintf_s(LogText, 100, "Littlewire error: %s", lwErrorName);
+#endif // !UNICODE
+
 								}
 							}
 							wprintf(L"Saving selected serial number to registry\n");

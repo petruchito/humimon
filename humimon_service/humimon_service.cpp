@@ -25,6 +25,7 @@
 #include "curl/curl.h"
 #include <tchar.h>
 #include <chrono>
+#include "ServiceSettings.h"
 #pragma endregion
 
 CHumimonService::CHumimonService(PWSTR pszServiceName,
@@ -99,6 +100,7 @@ void CHumimonService::OnStart(DWORD dwArgc, LPWSTR *lpszArgv)
 void CHumimonService::ServiceWorkerThread(void)
 {
 	int LastLoggedError = 0;
+	CServiceSettings Settings;
 
 	CURL *curl;
 	CURLcode res;
@@ -108,12 +110,12 @@ void CHumimonService::ServiceWorkerThread(void)
 	HANDLE hTimer = NULL;
 
 	LARGE_INTEGER liDueTime;
-	liDueTime.QuadPart = -100000000LL; //10 sec in 0.1us intervals
+	//liDueTime.QuadPart = -100000000LL; //10 sec in 0.1us intervals
+	liDueTime.QuadPart = Settings.Interval * -10000000LL;
 	hTimer = CreateWaitableTimer(NULL, TRUE, NULL);
 	
 	if (NULL == hTimer)
 	{
-
 		_stprintf_s(ErrorText, 100, _T("CreateWaitableTimer failed %d"), GetLastError());
 		WriteEventLogEntry(ErrorText, EVENTLOG_ERROR_TYPE);
 	}
@@ -134,22 +136,31 @@ void CHumimonService::ServiceWorkerThread(void)
 		}
 		else
 		{
-			//WriteEventLogEntry(L"Timer tick", EVENTLOG_INFORMATION_TYPE);
-			if (lw == NULL) lw = littleWire_connect();
+			if (lw == NULL)
+			{
+				littlewire_search();
+				lw = littlewire_connect_bySerialNum(Settings.Serial);
+			}
+			CServiceSettings SettingsTest;
 			if (lw)
 			{
 				LastLoggedError = 0;
 				dht_reading val = dht_read(lw, DHT22);
-				float temperature = TemperatureRead(lw);
+				double temperature = TemperatureRead(lw);
 
 				if ((!val.error || temperature != -404) && !littleWire_error())
 				{
 					curl = curl_easy_init();
 					if (curl)
 					{
-						char URLString[255] = { 0 };
+						char URLString[500] = { 0 };
+						char URLTemplate[500] = { 0 };
+						size_t converted = 0;
 						//TODO add a registry value for URL format string
-						sprintf_s(URLString, 255, "http://192.168.33.10:4567/submit?st=%.4f&t=%.1f&h=%.1f&ts=%llu",
+						wcstombs_s(&converted,URLTemplate, Settings.URL, 500);
+						//check conv length, make movable args in template
+						//"http://192.168.33.10:4567/submit?st=%.4f&t=%.1f&h=%.1f&ts=%llu"
+						sprintf_s(URLString, 500, URLTemplate,
 							temperature,
 							(float)val.temp / 10,
 							(float)val.humid / 10,
@@ -184,9 +195,9 @@ void CHumimonService::ServiceWorkerThread(void)
 					}
 					for (char i = 0; i < 3; i++)
 					{
-						WriteEventLogEntry(Errors[i], EVENTLOG_ERROR_TYPE);
+						WriteEventLogEntry(Errors[i], EVENTLOG_ERROR_TYPE);						
 					}
-					if (littleWire_error) {
+					if (littleWire_error()) {
 						LogLittleWireError();
 						lw = NULL;
 					}
@@ -229,7 +240,7 @@ void CHumimonService::LogLittleWireError(void)
 
 }
 
-float CHumimonService::TemperatureRead(littleWire* lw)
+double CHumimonService::TemperatureRead(littleWire* lw)
 {
 	unsigned char scratch, temphigh, templow = 0;
 
@@ -255,7 +266,7 @@ float CHumimonService::TemperatureRead(littleWire* lw)
 		}
 	}
 
-	float temperature = ((temphigh & 0x07) << 4);
+	double temperature = ((temphigh & 0x07) << 4);
 
 	if (temphigh & (0x01 << 11))
 		temperature = -temperature;
@@ -263,7 +274,7 @@ float CHumimonService::TemperatureRead(littleWire* lw)
 	for (int i = 0; i < 8; i++)
 	{
 		if (templow & (1 << i))
-			temperature += powf(2, (i - 4));
+			temperature += pow(2, (i - 4)); 
 	}
 
 	return temperature;
